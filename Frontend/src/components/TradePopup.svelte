@@ -1,10 +1,15 @@
 <script>
+  import { onMount } from 'svelte';
+  
   export let show = false;
   export let companies = [];
   export let cash = 0;
   export let onBuy = (companyName, quantity, leverage, tradeType) => {};
   export let onSell = (companyName, quantity, leverage, tradeType) => {};
   export let onClose = () => {};
+
+  let token = localStorage.getItem('token');
+  let username = localStorage.getItem('username') || 'Guest';
 
   // 거래 등록 폼 상태
   let selectedCompany = '';
@@ -19,37 +24,64 @@
     { label: '10배', value: 10 }
   ];
 
-  // 등록된 레버리지 거래 목록 (임시 데이터)
-  let leverageTrades = [
-    { id: 1, company: 'NVIDIA', leverage: 2, type: 'leverage', quantity: 10, user: '유저1' },
-    { id: 2, company: 'GOOGLE', leverage: 3, type: 'inverse', quantity: 5, user: '유저2' },
-    { id: 3, company: 'NEXON', leverage: 2, type: 'leverage', quantity: 20, user: '유저3' }
-  ];
+  // 등록된 레버리지 거래 목록
+  let leverageTrades = [];
+
+  let updateInterval;
 
   $: if (companies.length > 0 && !selectedCompany) {
     selectedCompany = companies[0].name;
   }
 
-  function registerTrade() {
+  // 거래 목록 가져오기
+  async function fetchLeverageTrades() {
+    try {
+      const res = await fetch('http://localhost:8000/api/leverage-trades');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      leverageTrades = data.trades || [];
+    } catch (error) {
+      console.error('거래 목록 가져오기 실패:', error);
+    }
+  }
+
+  // 거래 등록
+  async function registerTrade() {
     if (!selectedCompany || tradeQuantity <= 0) {
       alert('모든 항목을 입력해주세요.');
       return;
     }
 
-    const newTrade = {
-      id: Date.now(),
-      company: selectedCompany,
-      leverage: selectedLeverage,
-      type: tradeType,
-      quantity: tradeQuantity,
-      user: 'Me'
-    };
+    try {
+      const res = await fetch('http://localhost:8000/api/leverage-trades', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          company: selectedCompany,
+          leverage: selectedLeverage,
+          type: tradeType,
+          quantity: tradeQuantity,
+          user: username
+        })
+      });
 
-    leverageTrades = [...leverageTrades, newTrade];
-    
-    // 폼 초기화
-    tradeQuantity = 0;
-    alert('거래가 등록되었습니다!');
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      
+      const data = await res.json();
+      
+      // 폼 초기화
+      tradeQuantity = 0;
+      alert('거래가 등록되었습니다!');
+      
+      // 목록 새로고침
+      await fetchLeverageTrades();
+    } catch (error) {
+      console.error('거래 등록 실패:', error);
+      alert('서버와의 통신에 실패했습니다. 다시 시도해주세요.');
+    }
   }
 
   function acceptTrade(trade) {
@@ -59,13 +91,46 @@
     } else {
       onSell(trade.company, trade.quantity, trade.leverage, 'inverse');
     }
-    // 거래 목록에서 제거
-    leverageTrades = leverageTrades.filter(t => t.id !== trade.id);
+    
+    // 서버에서 삭제 요청
+    deleteTrade(trade.id);
   }
 
-  function deleteTrade(tradeId) {
-    leverageTrades = leverageTrades.filter(t => t.id !== tradeId);
+  async function deleteTrade(tradeId) {
+    try {
+      const res = await fetch(`http://localhost:8000/api/leverage-trades/${tradeId}`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      
+      // 목록 새로고침
+      await fetchLeverageTrades();
+    } catch (error) {
+      console.error('거래 삭제 실패:', error);
+      alert('서버와의 통신에 실패했습니다. 다시 시도해주세요.');
+    }
   }
+
+  onMount(() => {
+    // 초기 로드
+    fetchLeverageTrades();
+    
+    // 5초마다 목록 업데이트
+    updateInterval = setInterval(() => {
+      fetchLeverageTrades();
+    }, 5000);
+
+    // 정리 함수
+    return () => {
+      if (updateInterval) {
+        clearInterval(updateInterval);
+      }
+    };
+  });
 </script>
 <main></main>
 {#if show}
